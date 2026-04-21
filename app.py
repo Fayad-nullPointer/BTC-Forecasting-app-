@@ -6,6 +6,7 @@ from prophet import Prophet
 from pmdarima import auto_arima
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import ElasticNetCV
+from sklearn.metrics import mean_absolute_error, mean_squared_error
 from nixtla import NixtlaClient
 import warnings
 import os
@@ -29,6 +30,8 @@ st.sidebar.header("Configuration")
 uploaded_file = st.sidebar.file_uploader("Upload BTC Historical Data (CSV)", type=["csv"])
 
 model_choice = st.sidebar.selectbox("Select Model", ["Prophet", "ARIMA", "ML Hybrid (ElasticNet + RF)", "Nixtla TimeGPT"])
+
+price_value = st.sidebar.selectbox("Select Price Value", ["Close", "Open", "High", "Low"])
 
 api_key_input = ""
 if model_choice == "Nixtla TimeGPT":
@@ -110,6 +113,10 @@ def iterative_ml_forecast(train_df, horizon):
 if uploaded_file is not None:
     try:
         df = pd.read_csv(uploaded_file)
+        
+        st.subheader("Uploaded Data Preview")
+        st.dataframe(df.head())
+        
         if "Close time" in df.columns:
             date_col = "Close time"
         elif "Date" in df.columns:
@@ -119,10 +126,13 @@ if uploaded_file is not None:
         else:
             date_col = df.columns[0]
             
-        if "Close" in df.columns:
-            price_col = "Close"
+        # Find the requested price column
+        possible_cols = [c for c in df.columns if price_value.lower() in c.lower()]
+        if possible_cols:
+            price_col = possible_cols[0]
         else:
-            price_col = next((c for c in df.columns if 'close' in c.lower()), df.columns[1])
+            st.warning(f"Could not find exact '{price_value}' column. Using an alternative.")
+            price_col = df.columns[1]
 
         df[date_col] = pd.to_datetime(df[date_col]).dt.tz_localize(None)
         df = df.sort_values(by=date_col)
@@ -134,7 +144,45 @@ if uploaded_file is not None:
                 st.error("Nixtla API Key is required for the TimeGPT model.")
                 st.stop()
                 
-            with st.spinner(f"Training {model_choice} model and forecasting {forecast_horizon} days..."):
+            if model_choice == "Nixtla TimeGPT":
+                nixtla_client = NixtlaClient(api_key=api_key_input)
+                
+            with st.spinner(f"Training {model_choice} model, calculating error metrics, and forecasting {forecast_horizon} days..."):
+                
+                # Evaluation (Train/Test Split on Historical Data)
+                train_eval = df_model.iloc[:-forecast_horizon]
+                test_eval = df_model.iloc[-forecast_horizon:]
+                if len(train_eval) > 50:
+                    y_eval_pred = None
+                    if model_choice == "Prophet":
+                        m_eval = Prophet(daily_seasonality=True)
+                        m_eval.fit(train_eval)
+                        f_eval = m_eval.make_future_dataframe(periods=forecast_horizon)
+                        y_eval_pred = m_eval.predict(f_eval).iloc[-forecast_horizon:]['yhat'].values
+                    elif model_choice == "ARIMA":
+                        m_eval = auto_arima(train_eval['y'].values, seasonal=False, trace=False, error_action='ignore', suppress_warnings=True)
+                        y_eval_pred = m_eval.predict(n_periods=forecast_horizon)
+                    elif model_choice == "Nixtla TimeGPT":
+                        fcst_eval = nixtla_client.forecast(
+                            df=train_eval, h=forecast_horizon, target_col='y', time_col='ds'
+                        )
+                        y_eval_pred = fcst_eval['TimeGPT'].values
+                    elif model_choice == "ML Hybrid (ElasticNet + RF)":
+                        y_eval_pred = iterative_ml_forecast(train_eval, forecast_horizon)
+                        
+                    y_true = test_eval['y'].values
+                    mae = mean_absolute_error(y_true, y_eval_pred)
+                    rmse = np.sqrt(mean_squared_error(y_true, y_eval_pred))
+                    mape = np.mean(np.abs((y_true - y_eval_pred) / y_true)) * 100
+                    
+                    st.subheader(f"Model Error Metrics (Last {forecast_horizon} Days Backtest)")
+                    col_m1, col_m2, col_m3 = st.columns(3)
+                    col_m1.metric("MAE", f"${mae:,.2f}")
+                    col_m2.metric("RMSE", f"${rmse:,.2f}")
+                    col_m3.metric("MAPE", f"{mape:.2f}%")
+                    st.markdown("---")
+                    
+                # Full Forecast
                 forecast_dates = pd.date_range(start=df_model['ds'].iloc[-1] + pd.Timedelta(days=1), periods=forecast_horizon)
                 
                 fig = go.Figure()
