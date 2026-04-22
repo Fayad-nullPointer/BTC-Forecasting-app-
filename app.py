@@ -31,14 +31,14 @@ uploaded_file = st.sidebar.file_uploader("Upload BTC Historical Data (CSV)", typ
 
 model_choice = st.sidebar.selectbox("Select Model", ["Prophet", "ARIMA", "ML Hybrid (ElasticNet + RF)", "Nixtla TimeGPT"])
 
-st.sidebar.markdown("### 💡 Practical Instructions")
-st.sidebar.info(
-    "**Recommended Forecast Horizons:**\n"
-    "- **Prophet:** 1 to 3 days\n"
-    "- **ARIMA:** 25 to 30 days\n"
-    "- **Nixtla TimeGPT:** 1 to 20 days\n"
-    "- **ML Hybrid:** 1 to 50 days"
-)
+# st.sidebar.markdown("### 💡 Practical Instructions")
+# st.sidebar.info(
+#     "**Recommended Forecast Horizons:**\n"
+#     "- **Prophet:** 1 to 3 days\n"
+#     "- **ARIMA:** 25 to 30 days\n"
+#     "- **Nixtla TimeGPT:** 1 to 20 days\n"
+#     "- **ML Hybrid:** 1 to 50 days"
+# )
 
 price_value = st.sidebar.selectbox("Select Price Value", ["Close", "Open", "High", "Low"])
 
