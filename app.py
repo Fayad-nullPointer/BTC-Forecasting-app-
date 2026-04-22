@@ -31,6 +31,15 @@ uploaded_file = st.sidebar.file_uploader("Upload BTC Historical Data (CSV)", typ
 
 model_choice = st.sidebar.selectbox("Select Model", ["Prophet", "ARIMA", "ML Hybrid (ElasticNet + RF)", "Nixtla TimeGPT"])
 
+st.sidebar.markdown("### 💡 Practical Instructions")
+st.sidebar.info(
+    "**Recommended Forecast Horizons:**\n"
+    "- **Prophet:** 1 to 3 days\n"
+    "- **ARIMA:** 25 to 30 days\n"
+    "- **Nixtla TimeGPT:** 1 to 20 days\n"
+    "- **ML Hybrid:** 1 to 50 days"
+)
+
 price_value = st.sidebar.selectbox("Select Price Value", ["Close", "Open", "High", "Low"])
 
 api_key_input = ""
@@ -44,7 +53,7 @@ if model_choice == "Nixtla TimeGPT":
             pass
     api_key_input = st.sidebar.text_input("Nixtla API Key", value=default_key, type="password")
 
-forecast_horizon = st.sidebar.slider("Forecast Horizon (Days)", min_value=7, max_value=90, value=30, step=1)
+forecast_horizon = st.sidebar.slider("Forecast Horizon (Days)", min_value=1, max_value=90, value=30, step=1)
 
 confidence_level = st.sidebar.selectbox("Confidence Interval (%)", [80, 90, 95], index=2)
 
@@ -159,18 +168,23 @@ if uploaded_file is not None:
                 if len(train_eval) > 50:
                     y_eval_pred = None
                     if model_choice == "Prophet":
-                        m_eval = Prophet(daily_seasonality=True)
+                        m_eval = Prophet(seasonality_mode='multiplicative')
+                        m_eval.add_seasonality(name='monthly', period=30, fourier_order=10)
                         m_eval.fit(train_eval)
                         f_eval = m_eval.make_future_dataframe(periods=forecast_horizon)
                         y_eval_pred = m_eval.predict(f_eval).iloc[-forecast_horizon:]['yhat'].values
                     elif model_choice == "ARIMA":
-                        m_eval = auto_arima(train_eval['y'].values, seasonal=False, trace=False, error_action='ignore', suppress_warnings=True)
-                        y_eval_pred = m_eval.predict(n_periods=forecast_horizon)
+                        y_log = np.log(train_eval['y'].values)
+                        m_eval = auto_arima(y_log, seasonal=False, trace=False, error_action='ignore', suppress_warnings=True)
+                        y_eval_pred_log = m_eval.predict(n_periods=forecast_horizon)
+                        y_eval_pred = np.exp(y_eval_pred_log)
                     elif model_choice == "Nixtla TimeGPT":
+                        train_eval_log = train_eval.copy()
+                        train_eval_log['y'] = np.log(train_eval_log['y'])
                         fcst_eval = nixtla_client.forecast(
-                            df=train_eval, h=forecast_horizon, target_col='y', time_col='ds'
+                            df=train_eval_log, h=forecast_horizon, target_col='y', time_col='ds', finetune_steps=1
                         )
-                        y_eval_pred = fcst_eval['TimeGPT'].values
+                        y_eval_pred = np.exp(fcst_eval['TimeGPT'].values)
                     elif model_choice == "ML Hybrid (ElasticNet + RF)":
                         y_eval_pred = iterative_ml_forecast(train_eval, forecast_horizon)
                         
@@ -202,7 +216,8 @@ if uploaded_file is not None:
                 y_pred, y_lower, y_upper, f_dates = None, None, None, None
 
                 if model_choice == "Prophet":
-                    m = Prophet(interval_width=confidence_level/100.0, daily_seasonality=True)
+                    m = Prophet(interval_width=confidence_level/100.0, seasonality_mode='multiplicative')
+                    m.add_seasonality(name='monthly', period=30, fourier_order=10)
                     m.fit(df_model)
                     forecast_future = m.predict(m.make_future_dataframe(periods=forecast_horizon)).iloc[-forecast_horizon:]
                     
@@ -212,22 +227,25 @@ if uploaded_file is not None:
                     f_dates = forecast_future['ds']
                     
                 elif model_choice == "ARIMA":
-                    model = auto_arima(df_model['y'].values, seasonal=False, trace=False, error_action='ignore', suppress_warnings=True)
-                    preds, conf_int = model.predict(n_periods=forecast_horizon, return_conf_int=True, alpha=1-(confidence_level/100.0))
+                    y_log = np.log(df_model['y'].values)
+                    model = auto_arima(y_log, seasonal=False, trace=False, error_action='ignore', suppress_warnings=True)
+                    preds_log, conf_int_log = model.predict(n_periods=forecast_horizon, return_conf_int=True, alpha=1-(confidence_level/100.0))
                     
-                    y_pred = preds
-                    y_lower = conf_int[:, 0]
-                    y_upper = conf_int[:, 1]
+                    y_pred = np.exp(preds_log)
+                    y_lower = np.exp(conf_int_log[:, 0])
+                    y_upper = np.exp(conf_int_log[:, 1])
                     f_dates = forecast_dates
                     
                 elif model_choice == "Nixtla TimeGPT":
+                    df_model_log = df_model.copy()
+                    df_model_log['y'] = np.log(df_model_log['y'])
                     nixtla_client = NixtlaClient(api_key=api_key_input)
                     fcst = nixtla_client.forecast(
-                        df=df_model, h=forecast_horizon, target_col='y', time_col='ds', level=[confidence_level]
+                        df=df_model_log, h=forecast_horizon, target_col='y', time_col='ds', level=[confidence_level], finetune_steps=1
                     )
-                    y_pred = fcst['TimeGPT'].values
-                    y_lower = fcst[f'TimeGPT-lo-{confidence_level}'].values
-                    y_upper = fcst[f'TimeGPT-hi-{confidence_level}'].values
+                    y_pred = np.exp(fcst['TimeGPT'].values)
+                    y_lower = np.exp(fcst[f'TimeGPT-lo-{confidence_level}'].values)
+                    y_upper = np.exp(fcst[f'TimeGPT-hi-{confidence_level}'].values)
                     f_dates = fcst['ds']
                     
                 elif model_choice == "ML Hybrid (ElasticNet + RF)":
