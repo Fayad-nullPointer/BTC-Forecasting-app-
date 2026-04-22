@@ -168,11 +168,14 @@ if uploaded_file is not None:
                 if len(train_eval) > 50:
                     y_eval_pred = None
                     if model_choice == "Prophet":
+                        train_eval_prophet = train_eval.copy()
+                        train_eval_prophet['y'] = np.log(train_eval_prophet['y'])
                         m_eval = Prophet(seasonality_mode='multiplicative')
                         m_eval.add_seasonality(name='monthly', period=30, fourier_order=10)
-                        m_eval.fit(train_eval)
+                        m_eval.fit(train_eval_prophet)
                         f_eval = m_eval.make_future_dataframe(periods=forecast_horizon)
-                        y_eval_pred = m_eval.predict(f_eval).iloc[-forecast_horizon:]['yhat'].values
+                        y_eval_pred_log = m_eval.predict(f_eval).iloc[-forecast_horizon:]['yhat'].values
+                        y_eval_pred = np.exp(y_eval_pred_log)
                     elif model_choice == "ARIMA":
                         y_log = np.log(train_eval['y'].values)
                         m_eval = auto_arima(y_log, seasonal=False, trace=False, error_action='ignore', suppress_warnings=True)
@@ -216,14 +219,16 @@ if uploaded_file is not None:
                 y_pred, y_lower, y_upper, f_dates = None, None, None, None
 
                 if model_choice == "Prophet":
+                    df_model_prophet = df_model.copy()
+                    df_model_prophet['y'] = np.log(df_model_prophet['y'])
                     m = Prophet(interval_width=confidence_level/100.0, seasonality_mode='multiplicative')
                     m.add_seasonality(name='monthly', period=30, fourier_order=10)
-                    m.fit(df_model)
+                    m.fit(df_model_prophet)
                     forecast_future = m.predict(m.make_future_dataframe(periods=forecast_horizon)).iloc[-forecast_horizon:]
                     
-                    y_pred = forecast_future['yhat'].values
-                    y_lower = forecast_future['yhat_lower'].values
-                    y_upper = forecast_future['yhat_upper'].values
+                    y_pred = np.exp(forecast_future['yhat'].values)
+                    y_lower = np.exp(forecast_future['yhat_lower'].values)
+                    y_upper = np.exp(forecast_future['yhat_upper'].values)
                     f_dates = forecast_future['ds']
                     
                 elif model_choice == "ARIMA":
