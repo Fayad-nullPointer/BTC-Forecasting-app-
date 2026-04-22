@@ -127,16 +127,20 @@ if uploaded_file is not None:
             date_col = df.columns[0]
             
         # Find the requested price column
-        possible_cols = [c for c in df.columns if price_value.lower() in c.lower()]
+        possible_cols = [c for c in df.columns if price_value.lower() == c.lower().strip()]
+        if not possible_cols:
+            possible_cols = [c for c in df.columns if price_value.lower() in c.lower() and 'time' not in c.lower() and 'date' not in c.lower()]
+            
         if possible_cols:
             price_col = possible_cols[0]
         else:
             st.warning(f"Could not find exact '{price_value}' column. Using an alternative.")
             price_col = df.columns[1]
 
-        df[date_col] = pd.to_datetime(df[date_col]).dt.tz_localize(None)
+        df[date_col] = pd.to_datetime(df[date_col], utc=True).dt.tz_localize(None)
         df = df.sort_values(by=date_col)
         df_model = df[[date_col, price_col]].rename(columns={date_col: 'ds', price_col: 'y'})
+        df_model['y'] = pd.to_numeric(df_model['y'], errors='coerce')
         df_model.dropna(inplace=True)
 
         if generate_btn:
